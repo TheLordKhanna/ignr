@@ -1,0 +1,95 @@
+
+from slicer.ScriptedLoadableModule import ScriptedLoadableModuleTest
+
+class testtrialfunctions(ScriptedLoadableModuleTest):
+    def setUp(self):
+        slicer.mrmlScene.Clear()
+        self.delayDisplay('Loading testing dataset - hippocampus')
+
+        path = 'C:/Users/rajat/Downloads/TestSet'
+        volumeNode = slicer.util.loadVolume(path + '/r_hippoTest.nii.gz')
+        volumeNode1 = slicer.util.loadVolume(path + '/r_cortexTest.nii.gz')
+
+
+        if not volumeNode:
+            self.delayDisplay('Unable to load file')
+            return
+        
+        if not volumeNode1:
+            self.delayDisplay('Unable to load file')
+            return
+        
+        self.delayDisplay('File loaded successfully')
+
+        labelmapNode = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+        slicer.modules.volumes.logic().CreateLabelVolumeFromVolume(slicer.mrmlScene, labelmapNode, volumeNode)
+        hipponode = slicer.mrmlScene.GetFirstNodeByName('LabelMapVolume')
+
+        Fiducialnode = slicer.mrmlScene.AddNewNodeByClass('vtkMRMLMarkupsFiducialNode')
+        Fiducialnode = slicer.mrmlScene.GetFirstNodeByName('MarkupsFiducial')
+        Fiducialnode.AddControlPoint(1, 1, 1)
+
+        labelmapNode_1 = slicer.mrmlScene.AddNewNodeByClass("vtkMRMLLabelMapVolumeNode")
+        slicer.modules.volumes.logic().CreateLabelVolumeFromVolume(slicer.mrmlScene, labelmapNode_1, volumeNode1)
+        cortexNode = slicer.mrmlScene.GetFirstNodeByName('LabelMapVolume_1')
+
+
+    def checkpointinhippo(self):
+        hipponode = slicer.mrmlScene.GetFirstNodeByName('LabelMapVolume')
+        Fiducialnode = slicer.mrmlScene.GetFirstNodeByName('MarkupsFiducial')
+        hippopoints = points_in_labelmap(hipponode, Fiducialnode)
+        if hippopoints  == []:
+            print('no points found!!')
+
+        if hippopoints > []:
+            print('points found!!')
+
+
+    def checkifIJKiscorrect(self):
+
+        hipponode = slicer.mrmlScene.GetFirstNodeByName('LabelMapVolume')
+        raspoint  = Fiducialnode.GetNthControlPointPosition(0)
+        checkpoint = convert_ras_to_ijk(hipponode, raspoint)
+        print(checkpoint)
+        if checkpoint == (0, 0, 0):
+            print('pointiscorrect!!')
+        else: 
+            print('point is not correct!!')
+
+    
+    def checkinsertionangle(self):
+
+        testFilteredVectors = [([200.2784, 169.2371, 122.0490], [187.804, 102.3299, 122.0490]), ([185.536, 13.8763, 130.0490], [179.8660, 121.6082, 130.0490]), ([207.525, 123.882, 126.768], [146.0, 114.0, 133.0]), ([206.867, 126.505, 130.049], [166.0, 74.0, 138.0])]
+        test_valid_vectors = []
+        test_count_below_35 = 0
+        cortexNode = slicer.mrmlScene.GetFirstNodeByName('LabelMapVolume_1')
+
+        for entry, target in testFilteredVectors:
+
+            intersection, surface_normal = find_first_intersection(entry, target, cortexNode)
+            if intersection is None:
+                continue
+
+            vector = np.array(target) - np.array(entry)
+            vector_normalized = vector / np.linalg.norm(vector)
+            normal_normalized = surface_normal / np.linalg.norm(surface_normal)
+    
+            cos_theta = np.dot(vector_normalized, normal_normalized)
+            angle = np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0)))
+    
+            print(f"Vector: {vector}, Angle: {angle:.2f}")
+    
+            if angle <= 35:
+                test_valid_vectors.append((entry, target))
+                test_count_below_35 += 1
+
+        print("Total valid vectors (angle <= 35°):", test_count_below_35)
+
+
+
+    def runTest(self):
+        self.setUp()
+        self.checkpointinhippo()
+        self.checkifIJKiscorrect()
+        self.checkinsertionangle()
+        

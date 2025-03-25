@@ -1,0 +1,215 @@
+
+import slicer # type: ignore
+import numpy as np # type: ignore
+import vtk # type: ignore
+from scipy.spatial import cKDTree # type: ignore #Octree was not available in python, only in c++
+from scipy.optimize import differential_evolution, minimize # type: ignore
+
+#creating slicer nodes for the datasets
+ventriclesNode = slicer.mrmlScene.GetFirstNodeByName("ventriclesTest")
+vesselsNode = slicer.mrmlScene.GetFirstNodeByName("vesselsTestDilate1")
+hippocampusNode = slicer.mrmlScene.GetFirstNodeByName("r_hippoTest")
+entriesNode = slicer.mrmlScene.GetFirstNodeByName("entriesSubsample") 
+targetsNode = slicer.mrmlScene.GetFirstNodeByName("targetsSubsample")  
+modelNode = slicer.mrmlScene.GetFirstNodeByName('seg')
+cortexNode = slicer.mrmlScene.GetFirstNodeByName('r_cortexTest')
+
+
+def convert_ras_to_ijk(volumeNode, rasPoint):
+
+    #this initialises a 4x4 transformation matrix 
+    rasToIjkMatrix = vtk.vtkMatrix4x4()
+    
+    volumeNode.GetRASToIJKMatrix(rasToIjkMatrix)
+
+    #converting the array to 4x4 instead of the current RAS 3x3, as IJK is a homogenous coordinate system and RAS is a cartesian system
+    rasPoint_h = np.append(rasPoint, 1) 
+
+    ijkPoint = [0, 0, 0, 0]
+
+    #multiplying RAS point with transformation matrix to obtain a 4x4 IJK point with IJK and a translational 4th scaling component
+    rasToIjkMatrix.MultiplyPoint(rasPoint_h, ijkPoint)  
+
+    #removing the 4th component as it is not relevant to us, we only want IJK, which is the voxel position. Not adding an int was throwing 
+    #errors as without the int datatype returned in a float
+    return (int(ijkPoint[0]), int(ijkPoint[1]), int(ijkPoint[2]))
+
+
+def points_in_labelmap(labelmapNode, fiducialNode):
+
+    pointsInRegion = []
+    for i in range(fiducialNode.GetNumberOfControlPoints()):
+        rasPoint = [0.0, 0.0, 0.0]
+        fiducialNode.GetNthControlPointPosition(i, rasPoint)
+        ijkPoint = convert_ras_to_ijk(labelmapNode, rasPoint)
+        if labelmapNode.GetImageData().GetScalarComponentAsDouble(ijkPoint[0], ijkPoint[1], ijkPoint[2], 0) > 0:
+            pointsInRegion.append(rasPoint)
+    return pointsInRegion
+
+targetsWithinHippocampus = points_in_labelmap(hippocampusNode, targetsNode)
+
+
+entryPoints = []
+for i in range(entriesNode.GetNumberOfControlPoints()):
+    pos = [0, 0, 0] 
+    entriesNode.GetNthControlPointPosition(i, pos)
+    entryPoints.append(pos)
+
+vectors = [(entry, target) for entry in entryPoints for target in targetsWithinHippocampus]
+
+
+def is_trajectory_valid_intensity(entry, target, stepSize=5, intensityThreshold=0):
+
+    vector = np.array(target) - np.array(entry)
+    numSteps = int(np.linalg.norm(vector) / stepSize)
+
+   
+    for i in range(numSteps + 1):
+        
+        intermediatePoint = np.array(entry) + i * stepSize * (vector / np.linalg.norm(vector))
+        
+      
+        ijkPoint = convert_ras_to_ijk(ventriclesNode, intermediatePoint)
+        
+        
+        intensity_ventricles = ventriclesNode.GetImageData().GetScalarComponentAsDouble(ijkPoint[0], ijkPoint[1], ijkPoint[2], 0)
+        intensity_vessels = vesselsNode.GetImageData().GetScalarComponentAsDouble(ijkPoint[0], ijkPoint[1], ijkPoint[2], 0)
+
+       
+        if intensity_ventricles > intensityThreshold or intensity_vessels > intensityThreshold:
+            return False  
+
+    return True  
+
+
+filteredVectors = [(e, t) for e, t in vectors if is_trajectory_valid_intensity(e, t)]
+
+print("number of vectors-", len(filteredVectors))
+for entry, target in filteredVectors:
+    print("valid vector- entry point-", entry, "target-", target)
+
+
+    
+
+polydata = modelNode.GetMesh()
+
+
+numPoints = polydata.GetNumberOfPoints()
+points = np.array([polydata.GetPoint(i) for i in range(numPoints)])
+normals = np.array([polydata.GetPointData().GetNormals().GetTuple(i) for i in range(numPoints)])
+
+
+kd_tree = cKDTree(points)
+
+
+
+def find_first_intersection(entry, target, cortexNode, stepSize=0.5):
+
+    vector = np.array(target) - np.array(entry)
+    numSteps = int(np.linalg.norm(vector) / stepSize)
+    
+    for i in range(numSteps + 1):
+        point = np.array(entry) + i * stepSize * (vector / np.linalg.norm(vector))
+        ijkPoint = convert_ras_to_ijk(cortexNode, point)
+        
+        if cortexNode.GetImageData().GetScalarComponentAsDouble(ijkPoint[0], ijkPoint[1], ijkPoint[2], 0) > 0:
+            
+            closest_index = kd_tree.query(point)[1]
+            surface_normal = normals[closest_index]
+            return point, surface_normal
+    
+    return None, None  
+
+valid_vectors = []
+count_below_35 = 0
+
+for entry, target in filteredVectors:
+    intersection, surface_normal = find_first_intersection(entry, target, cortexNode)
+    if intersection is None:
+        continue  
+    
+    vector = np.array(target) - np.array(entry)
+    vector_normalized = vector / np.linalg.norm(vector)
+    normal_normalized = surface_normal / np.linalg.norm(surface_normal)
+    
+    cos_theta = np.dot(vector_normalized, normal_normalized)
+    angle = np.degrees(np.arccos(np.clip(cos_theta, -1.0, 1.0)))
+    
+    print(f"vector- {vector}, angle- {angle:.2f}")
+    
+    if angle <= 35:
+        valid_vectors.append((entry, target))
+        count_below_35 += 1
+
+print("the number of valid vectors (angle < 35 degrees)-", count_below_35)
+
+
+
+def get_voxel_positions(labelmapNode):
+
+    dims = labelmapNode.GetImageData().GetDimensions()
+    voxel_positions = []
+
+    #in these loops, for every i value, every j value corresponsing to that i value, and every k value corresponding to thay j value is looped
+    #over, so every voxel is considered in our code. GetScalarComponentAsDouble gives us the scalar intensity value for the voxel at that IJK 
+    #position. If it is above 0, that means it is in our labelmap region of interest, and it gets added to the empty voxel_positions list. 
+    for i in range(dims[0]):
+        for j in range(dims[1]):
+            for k in range(dims[2]):
+                if labelmapNode.GetImageData().GetScalarComponentAsDouble(i, j, k, 0) > 0:
+                    IJKpoint = (i, j, k)
+                    voxel_positions.append(IJKpoint)
+
+    return np.array(voxel_positions)
+
+ventriclestree = cKDTree(get_voxel_positions(ventriclesNode))
+vesselstree = cKDTree(get_voxel_positions(vesselsNode))
+
+
+
+
+def compute_closest_distance(labelmapNodetree, labelmapNode, entry, target):
+    stepSize = 0.5
+    vector = np.array(target) - np.array(entry)
+    numSteps = int(np.linalg.norm(vector) / stepSize)
+    Minimum_distance = float('inf')  
+
+    for i in range(numSteps + 1):
+        point = np.array(entry) + i * stepSize * (vector / np.linalg.norm(vector))
+
+        ijkPoint = convert_ras_to_ijk(labelmapNode, point)
+        
+        distance = labelmapNodetree.query(ijkPoint)[0]  
+         
+        Minimum_distance = min(Minimum_distance, distance)
+
+    return Minimum_distance
+
+
+
+def objective_function(params):
+    vector_index = int(params[0])
+    entry, target = valid_vectors[vector_index]
+    
+    distance_vessels = compute_closest_distance(vesselstree, vesselsNode, entry, target)
+    distance_ventricles = compute_closest_distance(ventriclestree, ventriclesNode, entry, target)
+    
+
+    weight_vessels = 0.5 
+    weight_ventricles = 0.5
+    combined_distance = weight_vessels * distance_vessels + weight_ventricles * distance_ventricles
+    
+    return -combined_distance  
+
+def run_optimization():
+    num_vectors = len(valid_vectors)
+    bounds = [(0, num_vectors - 1)]
+    result = differential_evolution(objective_function, bounds, maxiter= 30, popsize = 200)
+
+    best_entry, best_target = valid_vectors[int(result.x[0])]
+    print("population based best trajectory is - ", best_entry, "to", best_target)
+
+    return best_entry, best_target
+
+
+best_entry, best_target = run_optimization()

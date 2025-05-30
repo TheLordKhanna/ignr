@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="brain_biopsy_robot">
+    <xacro:arg name="initial_positions_file" default="initial_positions.yaml" />
+
+    <!-- import the brain_biopsy_robot URDF -->
+    <xacro:include filename="$(find my_jointed_robot)/urdf/final_improved_robot.urdf" />
+
+    <!-- import the ros2 control XACRO -->
+    <xacro:include filename="brain_biopsy_robot.ros2_control.xacro" />
+
+
+    <xacro:brain_biopsy_robot_ros2_control name="FakeSystem" initial_positions_file="$(arg initial_positions_file)"/>
+
+</robot>

@@ -1,7 +1,7 @@
 from moveit_configs_utils import MoveItConfigsBuilder
 from moveit_configs_utils.launches import generate_demo_launch
 
-#demo.launch.py will start RViz
+#demo.launch.py will start RViz and move_group
 #telling moveit config builder to find the brain_biopsy_robot from the ros2 package, the_ignr_moveit, and execute the given trajectory from move_group using the controller specified in the config file moveit_controllers.yaml
 
 def generate_launch_description():

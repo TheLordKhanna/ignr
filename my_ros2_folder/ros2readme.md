@@ -1,4 +1,4 @@
-This readme describes the implementation of the ROS2 component of our project. While using ROS2, it is good practice to always apply the following -
+This readme considers the implementation of the ROS2 component of our project. While using ROS2, it is good practice to always apply the following -
 
 1) packages should be inside your ROS2 workspace src folder
 2) Always source ros after starting a new terminal - source /opt/ros/jazzy/setup.bash
@@ -7,4 +7,10 @@ This readme describes the implementation of the ROS2 component of our project. W
 
 The igtl bridge package came pre-installed for our use, however, you can also clone ros2_igtl_bridge from the creators github repo. Importantly,on launching bridge.launch.py, we keep on receiving the error - libOpenIGTLink.so.3 not found. To solve this, use - export LD_LIBRARY_PATH=/usr/local/lib/igtl:$LD_LIBRARY_PATH
 
+If you choose to create a new moveit package using setup assistant but are using the same code in DVpack, please remember to change the names of the planning group, package, etc. in moveitcommanderfile.py. Additionally, if you choose to make a new py executable inside DVpack, please specify in setup.py or it will not show up. 
 
+Common errors - 
+1) libOpenIGTLink.so.3 not found. To solve this, use - export LD_LIBRARY_PATH=/usr/local/lib/igtl:$LD_LIBRARY_PATH
+2) moveit: no controllers found - reinstall moveit, or use ros2 update and upgrade to make sure all libraries are present. if you run ldd to check the installed libraries, make sure that none of them are indicated as 'not found'
+3) IGTL connection failed - make sure your slicer is an active server and that you have specified the correct port, client and IP
+4) Trajectory failed - most likely an issue with the point being outside your workspace. Either modify the point or create a robot with larger workspace
